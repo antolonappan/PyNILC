@@ -1,0 +1,7 @@
+pynilc
+======
+
+.. toctree::
+   :maxdepth: 4
+
+   pynilc

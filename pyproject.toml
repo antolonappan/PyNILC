@@ -1,0 +1,47 @@
+[build-system]
+requires = ["setuptools>=42", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "PyNILC"
+version = "0.1.0"
+description = "A Python package for NILC methods in cosmology"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [
+    {name = "Anto Idicherian Lonappan", email = "your_email@example.com"}
+]
+homepage = "https://github.com/echoCMB/PyNILC"
+repository = "https://github.com/echoCMB/PyNILC"
+keywords = ["NILC", "cosmology", "CMB", "Python"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent"
+]
+dependencies = [
+    "numpy",
+    "scipy",
+    "matplotlib",
+    "healpy",
+    "ducc0"
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "sphinx",
+    "black"
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.sphinx]
+# Example section for Sphinx-related metadata
+builder = "html"
+
+[tool.pytest.ini_options]
+# Example section for pytest configuration
+minversion = "6.0"
+addopts = "--strict-markers"

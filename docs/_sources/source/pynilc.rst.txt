@@ -1,0 +1,45 @@
+pynilc package
+==============
+
+Submodules
+----------
+
+pynilc.needlets module
+----------------------
+
+.. automodule:: pynilc.needlets
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+pynilc.nilc module
+------------------
+
+.. automodule:: pynilc.nilc
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+pynilc.sht module
+-----------------
+
+.. automodule:: pynilc.sht
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+pynilc.utils module
+-------------------
+
+.. automodule:: pynilc.utils
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+Module contents
+---------------
+
+.. automodule:: pynilc
+   :members:
+   :undoc-members:
+   :show-inheritance:
