@@ -353,8 +353,7 @@ class NILC:
         for j in tqdm(range(self.num_needlets), desc="Calculating residuals"):
             scale = self.find_scale(j)
             weights = weight_list[j]
-            weighted_map = np.sum(scale * weights, axis=0)
-            residuals = scale - weighted_map[:, np.newaxis]
+            residuals = np.sum(scale * weights, axis=0)
             filtered_alm = hp.map2alm(residuals)
             filtered_alm = hp.almxfl(filtered_alm, self.needlet_filters[j])
             residual_map += hp.alm2map(filtered_alm, hp.get_nside(maps[0][0]))
