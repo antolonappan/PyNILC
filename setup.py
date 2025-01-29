@@ -12,7 +12,7 @@ setup(
     description="A Python package for NILC methods in cosmology",
     long_description=long_description,
     long_description_content_type="text/markdown",  # If your README is in Markdown format
-    url="https://github.com/echoCMB/PyNILC",  # URL of your GitHub repository
+    url="https://github.com/antolonappan/PyNILC",  # URL of your GitHub repository
     packages=find_packages(),  # Automatically find packages in your project
     classifiers=[
         "Programming Language :: Python :: 3",

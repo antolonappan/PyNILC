@@ -7,6 +7,7 @@ from tqdm import tqdm
 import gc
 import os
 from concurrent.futures import ThreadPoolExecutor
+
 class NILC:
     """
     NILC (Needlet Internal Linear Combination) class for component separation and residual calculation.
@@ -31,7 +32,8 @@ class NILC:
         deconvolve: bool = True,
         backend: str = "healpy",
         nside: int = None,
-        nthreads: Union[str,int] = 'auto'
+        nthreads: Union[str,int] = 'auto',
+        parallel: int = 1
     ):
         self.frequencies = frequencies
         self.fwhm = np.array(fwhm)
@@ -53,6 +55,14 @@ class NILC:
         else:
             self.use_healpy = True
             self.nthreads = os.cpu_count()
+        
+        self.parallel = parallel
+        if self.parallel == 0:
+            print("Parallel processing is disabled")
+        elif parallel <= 2:
+            print(f"Level {self.parallel} parallel processing is enabled")
+        else:
+            raise ValueError("Invalid parallel processing level. Use 0, 1, or 2")
 
 
     @property
@@ -94,9 +104,11 @@ class NILC:
             return alm
 
         # Use ThreadPoolExecutor to parallelize the loop
-        with ThreadPoolExecutor(max_workers=len(maps)) as executor:
-            alms = list(tqdm(executor.map(process_map, range(len(maps))), desc="Computing alms", total=len(maps)))
-
+        if self.parallel >= 1:
+            with ThreadPoolExecutor(max_workers=len(maps)) as executor:
+                alms = list(tqdm(executor.map(process_map, range(len(maps))), desc="Computing alms", total=len(maps)))
+        else:
+            alms = [process_map(i) for i in tqdm(range(len(maps)), desc="Computing alms")]
         return np.array(alms)
     
     def _map_to_alm_polarization(self, maps: List[np.ndarray], field: int) -> np.ndarray:
@@ -129,10 +141,11 @@ class NILC:
                 hp.almxfl(alm, cli(beam), inplace=True)
             return alm
 
-        # Use ThreadPoolExecutor to parallelize the loop
-        with ThreadPoolExecutor(max_workers=len(maps)) as executor:
-            alms = list(tqdm(executor.map(process_map, range(len(maps))), desc="Computing alms", total=len(maps)))
-
+        if self.parallel >= 1:
+            with ThreadPoolExecutor(max_workers=len(maps)) as executor:
+                alms = list(tqdm(executor.map(process_map, range(len(maps))), desc="Computing alms", total=len(maps)))
+        else:
+            alms = [process_map(i) for i in tqdm(range(len(maps)), desc="Computing alms")]
         return np.array(alms)
 
     def map_to_alm(self, maps: List[np.ndarray], field: int) -> np.ndarray:
@@ -173,9 +186,11 @@ class NILC:
             angular_radius = np.arccos(1 - effective_area / (2 * np.pi)) * 180 / np.pi
             return np.sqrt(8 * np.log(2)) * angular_radius
 
-        # Use ThreadPoolExecutor to parallelize the loop
-        with ThreadPoolExecutor(max_workers=len(self.needlet_filters)) as executor:
-            results = list(executor.map(process_needlet, range(self.num_needlets)))
+        if self.parallel >= 1:
+            with ThreadPoolExecutor(max_workers=len(self.needlet_filters)) as executor:
+                results = list(executor.map(process_needlet, range(self.num_needlets)))
+        else:
+            results = [process_needlet(j) for j in range(self.num_needlets)]
 
         self.fwhm[:] = results
 
@@ -209,8 +224,12 @@ class NILC:
                 return loc_hp.alm2map(filtered_alm, loc_lmax, self.nthreads)
 
         # Use ThreadPoolExecutor to parallelize the loop
-        with ThreadPoolExecutor(max_workers=len(self.alms)) as executor:
-            scale_maps = list(executor.map(process_alm, self.alms))
+
+        if self.parallel >= 1:
+            with ThreadPoolExecutor(max_workers=len(self.alms)) as executor:
+                scale_maps = list(executor.map(process_alm, self.alms))
+        else:
+            scale_maps = [process_alm(alm) for alm in self.alms]
 
         return np.array(scale_maps)
     
@@ -255,17 +274,25 @@ class NILC:
             return i, k, smoothed
 
         # Parallelize the computation of covariance elements
-        with ThreadPoolExecutor(max_workers=self.nthreads) as executor:
-            futures = []
+        if self.parallel >= 1:
+            with ThreadPoolExecutor(max_workers=self.nthreads) as executor:
+                futures = []
+                for i in range(num_maps):
+                    for k in range(i, num_maps):
+                        futures.append(executor.submit(compute_covariance, i, k, j))
+
+                for future in futures:
+                    i, k, smoothed = future.result()
+                    covariance[:, i, k] = smoothed
+                    if i != k:
+                        covariance[:, k, i] = smoothed
+        else:
             for i in range(num_maps):
                 for k in range(i, num_maps):
-                    futures.append(executor.submit(compute_covariance, i, k, j))
-
-            for future in futures:
-                i, k, smoothed = future.result()
-                covariance[:, i, k] = smoothed
-                if i != k:
-                    covariance[:, k, i] = smoothed
+                    _, _, smoothed = compute_covariance(i, k, j)
+                    covariance[:, i, k] = smoothed
+                    if i != k:
+                        covariance[:, k, i] = smoothed
 
         # Invert the covariance matrix
         inv_cov = np.linalg.inv(covariance)
@@ -315,8 +342,11 @@ class NILC:
         ilc_map = np.zeros(hp.nside2npix(nside))
         weight_list = []
 
-        with ThreadPoolExecutor(max_workers=self.nthreads) as executor:
-            futures = list(tqdm(executor.map(process_needlet, range(self.num_needlets)), desc="Processing Needlet Scales", total=self.num_needlets))
+        if self.parallel >= 2:
+            with ThreadPoolExecutor(max_workers=self.nthreads) as executor:
+                futures = list(tqdm(executor.map(process_needlet, range(self.num_needlets)), desc="Processing Needlet Scales", total=self.num_needlets))
+        else:
+            futures = [process_needlet(j) for j in tqdm(range(self.num_needlets), desc="Processing Needlet Scales")]
 
         for filtered_map, weights in futures:
             ilc_map += filtered_map

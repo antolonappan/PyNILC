@@ -9,10 +9,9 @@ description = "A Python package for NILC methods in cosmology"
 readme = "README.md"
 license = {text = "MIT"}
 authors = [
-    {name = "Anto Idicherian Lonappan", email = "your_email@example.com"}
+    {name = "Anto Idicherian Lonappan", email = "antolonappan@icloud.com"}
 ]
-homepage = "https://github.com/echoCMB/PyNILC"
-repository = "https://github.com/echoCMB/PyNILC"
+
 keywords = ["NILC", "cosmology", "CMB", "Python"]
 classifiers = [
     "Programming Language :: Python :: 3",
@@ -27,6 +26,11 @@ dependencies = [
     "ducc0"
 ]
 
+requires-python = ">=3.9"  # Correct placement of Python version requirement
+
+[project.scripts]
+pynilc = "pynilc.cli:main"  # Correct way to define a CLI script
+
 [project.optional-dependencies]
 dev = [
     "pytest",
@@ -35,13 +39,4 @@ dev = [
 ]
 
 [tool.setuptools.packages.find]
-where = ["src"]
-
-[tool.sphinx]
-# Example section for Sphinx-related metadata
-builder = "html"
-
-[tool.pytest.ini_options]
-# Example section for pytest configuration
-minversion = "6.0"
-addopts = "--strict-markers"
+where = ["."]
