@@ -32,6 +32,7 @@ class NILC:
         deconvolve: bool = True,
         backend: str = "healpy",
         nside: int = None,
+        common_fwhm: float = None,
         nthreads: Union[str,int] = 'auto',
         parallel: int = 1
     ):
@@ -63,6 +64,7 @@ class NILC:
             print(f"Level {self.parallel} parallel processing is enabled")
         else:
             raise ValueError("Invalid parallel processing level. Use 0, 1, or 2")
+        self.common_fwhm = common_fwhm
 
 
     @property
@@ -74,6 +76,26 @@ class NILC:
     def needlet_nside(self) -> np.ndarray:
         """NSIDE corresponding to the maximum multipole of each needlet filter."""
         return np.array([2**int(np.log2(lmax)) for lmax in self.lmax_per_needlet])
+    
+    def _apply_common_beam(self, alm: np.ndarray, channel: int, lmax: int):
+        """
+        If common_fwhm is provided, apply the re-beaming correction:
+        multiply alm by (common_beam / original_beam).
+        """
+        if self.common_fwhm is not None:
+            # Compute target common beam transfer function.
+            common_beam = hp.gauss_beam(np.radians(self.common_fwhm / 60), lmax=lmax)
+            # Compute original beam transfer function for this channel.
+            orig_beam = hp.gauss_beam(np.radians(self.fwhm[channel] / 60), lmax=lmax)
+            # Compute the ratio (avoid division by zero issues by clipping if needed)
+            #beam_ratio = common_beam / np.clip(orig_beam, 1e-10, None)
+            beam_ratio = orig_beam / np.clip(common_beam, 1e-10, None)
+
+            hp.almxfl(alm, cli(beam_ratio), inplace=True)
+        else:
+            # If no common beam is provided, use the original beam for deconvolution.
+            beam = hp.gauss_beam(np.radians(self.fwhm[channel] / 60), lmax=lmax)
+            hp.almxfl(alm, cli(beam), inplace=True)
 
     def _map_to_alm_temperature(self, maps: List[np.ndarray]) -> np.ndarray:
         """
@@ -99,14 +121,13 @@ class NILC:
             else:
                 alm = self.hp.map2alm(temp_map[0], lmax, self.nthreads)
             if self.deconvolve:
-                beam = hp.gauss_beam(np.radians(self.fwhm[i] / 60), lmax=lmax)
-                hp.almxfl(alm, cli(beam), inplace=True)
+                self._apply_common_beam(alm, i, lmax)
             return alm
 
-        # Use ThreadPoolExecutor to parallelize the loop
         if self.parallel >= 1:
             with ThreadPoolExecutor(max_workers=len(maps)) as executor:
-                alms = list(tqdm(executor.map(process_map, range(len(maps))), desc="Computing alms", total=len(maps)))
+                alms = list(tqdm(executor.map(process_map, range(len(maps))),
+                                 desc="Computing alms", total=len(maps)))
         else:
             alms = [process_map(i) for i in tqdm(range(len(maps)), desc="Computing alms")]
         return np.array(alms)
@@ -127,7 +148,8 @@ class NILC:
         np.ndarray
             Array of spherical harmonic coefficients.
         """
-        print(f"Computing {'E' if field == 1 else 'B'}-mode alms")
+        mode = 'E' if field == 1 else 'B'
+        print(f"Computing {mode}-mode alms")
         lmax = int(np.max(self.lmax_per_needlet))
 
         def process_map(i):
@@ -137,13 +159,13 @@ class NILC:
             else:
                 alm = self.hp.map2alm(pol_map[1:], lmax, self.nthreads)[field - 1]
             if self.deconvolve:
-                beam = hp.gauss_beam(np.radians(self.fwhm[i] / 60), lmax=lmax)
-                hp.almxfl(alm, cli(beam), inplace=True)
+                self._apply_common_beam(alm, i, lmax)
             return alm
 
         if self.parallel >= 1:
             with ThreadPoolExecutor(max_workers=len(maps)) as executor:
-                alms = list(tqdm(executor.map(process_map, range(len(maps))), desc="Computing alms", total=len(maps)))
+                alms = list(tqdm(executor.map(process_map, range(len(maps))),
+                                 desc="Computing alms", total=len(maps)))
         else:
             alms = [process_map(i) for i in tqdm(range(len(maps)), desc="Computing alms")]
         return np.array(alms)
