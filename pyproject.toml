@@ -4,10 +4,9 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "PyNILC"
-version = "0.1.0"
+version = "1.0.0"
 description = "A Python package for NILC methods in cosmology"
 readme = "README.md"
-license = {text = "MIT"}
 authors = [
     {name = "Anto Idicherian Lonappan", email = "antolonappan@icloud.com"}
 ]
@@ -15,7 +14,6 @@ authors = [
 keywords = ["NILC", "cosmology", "CMB", "Python"]
 classifiers = [
     "Programming Language :: Python :: 3",
-    "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent"
 ]
 dependencies = [
@@ -40,3 +38,6 @@ dev = [
 
 [tool.setuptools.packages.find]
 where = ["."]
+
+[project.license]
+file = "LICENSE"

@@ -6,7 +6,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setup(
     name="PyNILC",  # Your package name
-    version="0.1.0",  # Initial version; update as needed
+    version="1.0.0",  # Initial version; update as needed
     author="Anto Idicherian Lonappan",  # Replace with your name
     author_email="mail@antolonappan.me",  # Replace with your email
     description="A Python package for NILC methods in cosmology",
@@ -16,7 +16,6 @@ setup(
     packages=find_packages(),  # Automatically find packages in your project
     classifiers=[
         "Programming Language :: Python :: 3",
-        "License :: OSI Approved :: MIT License",  # Adjust if your license differs
         "Operating System :: OS Independent",
     ],
     python_requires=">=3.9",  # Specify the Python version you want to support
