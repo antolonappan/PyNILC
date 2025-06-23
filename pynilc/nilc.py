@@ -7,6 +7,7 @@ from tqdm import tqdm
 import gc
 import os
 from concurrent.futures import ThreadPoolExecutor
+import tempfile
 
 class NILC:
     """
@@ -33,15 +34,19 @@ class NILC:
         backend: str = "healpy",
         nside: int = None,
         common_fwhm: float = None,
+        required_num_modes: int = 2500,
         nthreads: Union[str,int] = 'auto',
         parallel: int = 1
     ):
         self.frequencies = frequencies
-        self.fwhm = np.array(fwhm)
+        self.input_fwhm = np.array(fwhm)
         self.needlet_filters = needlet_filters
         self.num_needlets = len(needlet_filters)
         self.ilc_tolerance = ilc_tolerance
         self.deconvolve = deconvolve
+        self.nside = nside
+        self.required_num_modes = required_num_modes
+
 
         assert backend in ["healpy", "ducc"], "Invalid backend. Use 'healpy' or 'ducc'"
         if backend == "ducc":
@@ -65,7 +70,7 @@ class NILC:
         else:
             raise ValueError("Invalid parallel processing level. Use 0, 1, or 2")
         self.common_fwhm = common_fwhm
-
+        self.tmpdir = tempfile.mkdtemp()
 
     @property
     def lmax_per_needlet(self) -> np.ndarray:
@@ -86,7 +91,7 @@ class NILC:
             # Compute target common beam transfer function.
             common_beam = hp.gauss_beam(np.radians(self.common_fwhm / 60), lmax=lmax)
             # Compute original beam transfer function for this channel.
-            orig_beam = hp.gauss_beam(np.radians(self.fwhm[channel] / 60), lmax=lmax)
+            orig_beam = hp.gauss_beam(np.radians(self.input_fwhm[channel] / 60), lmax=lmax)
             # Compute the ratio (avoid division by zero issues by clipping if needed)
             #beam_ratio = common_beam / np.clip(orig_beam, 1e-10, None)
             beam_ratio = orig_beam / np.clip(common_beam, 1e-10, None)
@@ -94,7 +99,7 @@ class NILC:
             hp.almxfl(alm, cli(beam_ratio), inplace=True)
         else:
             # If no common beam is provided, use the original beam for deconvolution.
-            beam = hp.gauss_beam(np.radians(self.fwhm[channel] / 60), lmax=lmax)
+            beam = hp.gauss_beam(np.radians(self.input_fwhm[channel] / 60), lmax=lmax)
             hp.almxfl(alm, cli(beam), inplace=True)
 
     def _map_to_alm_temperature(self, maps: List[np.ndarray]) -> np.ndarray:
@@ -190,32 +195,39 @@ class NILC:
             return self._map_to_alm_temperature(maps)
         return self._map_to_alm_polarization(maps, field)
     
-
+    
     def compute_covariance_fwhm(self):
-        """
-        Compute FWHM for covariance estimation based on needlet filters and map characteristics in parallel.
-        """
-        self.fwhm = np.zeros(self.num_needlets)
-        lmax = int(np.max(self.lmax_per_needlet))
 
-        def process_needlet(j):
-            filter_ = self.needlet_filters[j]
-            dof = np.sum(filter_ ** 2 * (2 * np.arange(lmax + 1) + 1))
-            sky_fraction = min((len(self.frequencies) - 1) / (self.ilc_tolerance * dof), 1)
-            nside = self.needlet_nside[j]
-            npix = hp.nside2npix(nside)
-            effective_area = sky_fraction * npix * hp.nside2pixarea(nside)
-            angular_radius = np.arccos(1 - effective_area / (2 * np.pi)) * 180 / np.pi
-            return np.sqrt(8 * np.log(2)) * angular_radius
+        if not isinstance(self.needlet_filters, np.ndarray) or len(self.needlet_filters.shape) != 2:
+            raise ValueError("self.needlet_filters must be a 2D NumPy array")
+        nlmax = self.needlet_filters.shape[1] - 1
+        l = np.arange(nlmax + 1)
+        
+        fwhm_results = []
+        n_tot = 12 * self.nside ** 2
+        theta_pix = np.pi / (np.sqrt(3) * self.nside)
 
-        if self.parallel >= 1:
-            with ThreadPoolExecutor(max_workers=len(self.needlet_filters)) as executor:
-                results = list(executor.map(process_needlet, range(self.num_needlets)))
-        else:
-            results = [process_needlet(j) for j in range(self.num_needlets)]
+        for b in range(self.needlet_filters.shape[0]):
+            needlet_band = self.needlet_filters[b, :]
+            
+            total_num_modes = np.sum((2 * l + 1) * needlet_band**2)
+            if total_num_modes < self.required_num_modes:
+                raise ValueError(f"Band {b} has insufficient modes ({total_num_modes}) for {self.required_num_modes}")
 
-        self.fwhm[:] = results
+            mode_fraction = self.required_num_modes / total_num_modes
 
+            n_p_min = n_tot * mode_fraction
+            
+            fwhm_rad = theta_pix * np.sqrt(n_p_min / np.pi)
+            fwhm_deg = fwhm_rad * 180 / np.pi
+            
+            ell_peak = np.argmax(needlet_band)
+            scaling_factor = max(1.0, (nlmax - ell_peak) / (nlmax - l[0]))
+            fwhm_deg = fwhm_deg * scaling_factor
+            
+            fwhm_results.append(fwhm_deg) #np.clip(fwhm_deg, 30, 200)
+        
+        self.fwhm = np.array(fwhm_results)
 
     def find_scale(self, j: int) -> np.ndarray:
         """
@@ -283,7 +295,7 @@ class NILC:
         def compute_covariance(i, k, j):
             product = scale[i] * scale[k]
             if self.use_healpy:
-                smoothed = hp.smoothing(product, np.radians(self.fwhm[j]), iter=0)
+                smoothed = hp.smoothing(product, np.radians(self.fwhm[j]))
             else:
                 nside = self.needlet_nside[j]
                 lmax = 3 * nside - 1
@@ -322,9 +334,9 @@ class NILC:
         # Compute weights
         weights = (inv_cov @ one_vec).T / (one_vec @ inv_cov @ one_vec + 1e-15)
         return weights
-
     
-    def component_separation(self, maps: List[np.ndarray], field: int) -> Tuple[np.ndarray, List[np.ndarray]]:
+    
+    def component_separation(self, maps: List[np.ndarray], field: int=0) -> Tuple[np.ndarray, List[np.ndarray]]:
         """
         Perform component separation using NILC in parallel.
 
@@ -412,6 +424,5 @@ class NILC:
 
         # Clear temporary variables for garbage collection
         self.alms = None
-        gc.collect()
-
+        #gc.collect()
         return residual_map
