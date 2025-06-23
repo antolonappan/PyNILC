@@ -9,7 +9,7 @@ powered by ducc0 and multi-threading
 # Installation
 
 ```bash
-git clone https://github.com/echoCMB/PyNILC
+git clone https://github.com/antolonappan/PyNILC
 cd PyNILC
 pip install -e .
 
