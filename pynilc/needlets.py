@@ -7,29 +7,52 @@ class NeedletTransform:
         pass
 
     @staticmethod
-    def CosineNeedlet(bandcenters):
+    def CosineNeedlet(bandcenters, lmax=None):
         """
-        Generate cosine bands based on the provided band centers.
+        Generate cosine window bands based on the provided band centers.
 
         Parameters:
-        - bandcenters: A list or array of band centers.
+        - bandcenters: A list or array of band centers (multipole peaks).
+        - lmax: Optional maximum ell. If not provided, it is set to the max of bandcenters.
 
         Returns:
-        - bands: A 2D array of cosine bands.
+        - bands: A 2D array of shape (nbands, lmax + 1) with cosine bands.
         """
-        lmax = int(np.max(bandcenters))
+        bandcenters = sorted([int(c) for c in bandcenters])
+        if lmax is None:
+            lmax = bandcenters[-1]
         nbands = len(bandcenters)
         bands = np.zeros((nbands, lmax + 1), dtype=np.float64)
 
-        for i in range(nbands):
-            if i > 0:  # Left part for current band
-                a, b = bandcenters[i - 1], bandcenters[i]
-                ell_left = np.arange(a, b + 1)
-                bands[i, ell_left] = np.cos((b - ell_left) / (b - a) * np.pi / 2)
-            if i < nbands - 1:  # Right part for current band
-                b, c = bandcenters[i], bandcenters[i + 1]
-                ell_right = np.arange(b, c + 1)
-                bands[i, ell_right] = np.cos((ell_right - b) / (c - b) * np.pi / 2)
+        # First band: flat before first center
+        if bandcenters[0] > 0:
+            bands[0, :bandcenters[0]] = 1.0
+
+        # First transition
+        if nbands > 1:
+            bands[0, bandcenters[0]:bandcenters[1]+1] = np.cos(
+                (bandcenters[0] - np.arange(bandcenters[0], bandcenters[1]+1)) / 
+                (bandcenters[0] - bandcenters[1]) * np.pi / 2
+            )
+
+        # Middle bands
+        for i in range(1, nbands - 1):
+            a, b, c = bandcenters[i - 1], bandcenters[i], bandcenters[i + 1]
+            ell_left = np.arange(a, b + 1)
+            ell_right = np.arange(b, c + 1)
+            bands[i, ell_left] = np.cos((b - ell_left) / (b - a) * np.pi / 2)
+            bands[i, ell_right] = np.cos((ell_right - b) / (c - b) * np.pi / 2)
+
+        # Last transition
+        if nbands > 1:
+            bands[-1, bandcenters[-2]:bandcenters[-1]+1] = np.cos(
+                (np.arange(bandcenters[-2], bandcenters[-1]+1) - bandcenters[-1]) /
+                (bandcenters[-2] - bandcenters[-1]) * np.pi / 2
+            )
+
+        # Flat after last center
+        if bandcenters[-1] < lmax:
+            bands[-1, bandcenters[-1]+1:] = 1.0
 
         return bands
     

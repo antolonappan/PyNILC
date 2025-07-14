@@ -29,23 +29,29 @@ class NILC:
         frequencies: List[float], 
         fwhm: List[float], 
         needlet_filters: List[np.ndarray], 
-        ilc_tolerance: float = 1e-4,
+        ilc_bias: float = 1e-2,
         deconvolve: bool = True,
         backend: str = "healpy",
         nside: int = None,
         common_fwhm: float = None,
         required_num_modes: int = 2500,
         nthreads: Union[str,int] = 'auto',
-        parallel: int = 1
+        parallel: int = 1,
+        bias_method: str = 'nmodes',
+        mask = None
     ):
         self.frequencies = frequencies
         self.input_fwhm = np.array(fwhm)
         self.needlet_filters = needlet_filters
         self.num_needlets = len(needlet_filters)
-        self.ilc_tolerance = ilc_tolerance
+        self.ilc_bias = ilc_bias
         self.deconvolve = deconvolve
         self.nside = nside
         self.required_num_modes = required_num_modes
+        mask = np.ones(hp.nside2npix(nside)) if mask is None else mask
+        self.mask = hp.ud_grade(mask, nside)
+        self.bias_method = bias_method
+        assert bias_method in ['nmodes', 'tol'], "bias_method must be either 'nmodes' or 'tol'"
 
 
         assert backend in ["healpy", "ducc"], "Invalid backend. Use 'healpy' or 'ducc'"
@@ -196,7 +202,7 @@ class NILC:
         return self._map_to_alm_polarization(maps, field)
     
     
-    def compute_covariance_fwhm(self):
+    def compute_covariance_fwhm_nmodes(self):
 
         if not isinstance(self.needlet_filters, np.ndarray) or len(self.needlet_filters.shape) != 2:
             raise ValueError("self.needlet_filters must be a 2D NumPy array")
@@ -228,6 +234,59 @@ class NILC:
             fwhm_results.append(fwhm_deg) #np.clip(fwhm_deg, 30, 200)
         
         self.fwhm = np.array(fwhm_results)
+
+    
+    def compute_covariance_fwhm_tol(self):
+        if not isinstance(self.needlet_filters, np.ndarray) or len(self.needlet_filters.shape) != 2:
+            raise ValueError("self.needlet_filters must be a 2D NumPy array")
+
+        nlmax = len(self.needlet_filters[0]) - 1
+        l = np.arange(nlmax + 1)
+        fwhm_results = []
+
+        if not hasattr(self, 'frequencies') or not hasattr(self, 'ilc_bias'):
+            raise AttributeError("Attributes 'frequencies' and 'ilc_bias' must be defined")
+
+        nchan = len(self.frequencies)
+
+        for i in range(self.needlet_filters.shape[0]):
+            nside_i = self.needlet_nside[i]
+            needlet_band = self.needlet_filters[i, :]
+            nmodes_band = np.sum((2 * l + 1) * needlet_band**2)
+
+            if nmodes_band <= 0:
+                raise ValueError(f"Band {i} has non-positive number of modes: {nmodes_band}")
+            if self.ilc_bias <= 0:
+                raise ValueError("ilc_bias must be positive")
+
+            npix = hp.nside2npix(nside_i)
+
+            # Number of pixels required to achieve the bias tolerance
+            pps = np.sqrt((npix * (nchan - 1)) / (self.ilc_bias * nmodes_band))
+
+            # Pixel size in radians
+            pix_size_rad = np.sqrt(4.0 * np.pi / npix)
+
+            # Statistical FWHM in radians
+            fwhm_rad = pps * pix_size_rad
+
+            # Convert FWHM to degrees
+            fwhm_deg = np.rad2deg(fwhm_rad)
+
+            fwhm_results.append(fwhm_deg)
+
+        self.fwhm = np.array(fwhm_results)
+
+    def compute_covariance_fwhm(self):
+        """
+        Compute the FWHM for each needlet filter based on the specified bias method.
+        """
+        if self.bias_method == 'nmodes':
+            self.compute_covariance_fwhm_nmodes()
+        elif self.bias_method == 'tol':
+            self.compute_covariance_fwhm_tol()
+        else:
+            raise ValueError("Invalid bias method. Use 'nmodes' or 'tol'.")
 
     def find_scale(self, j: int) -> np.ndarray:
         """
@@ -293,8 +352,26 @@ class NILC:
         covariance = np.zeros((num_pixels, num_maps, num_maps))
 
         def compute_covariance(i, k, j):
+            # nside = max(1, self.needlet_nside[j]//4)
+            # product = hp.ud_grade(scale[i] * scale[k],nside_out=nside,order_out="RING")
+            # lmax = 2 * nside
+            # fwhm_stat = np.radians(self.fwhm[j])
+            # bl_stat = hp.gauss_beam(fwhm_stat, lmax=lmax)
+            # thetas = np.arange(0,np.pi,0.002)
+            # beam_stat = hp.bl2beam(bl_stat, thetas)
+            # theta_ = 0.5 * fwhm_stat
+            # dist = 0.5 * (np.tanh(30 * (thetas - 0.3 * theta_)) - np.tanh(30 * (thetas - 3 * theta_)))
+            # dist /= np.max(dist)
+            # dist[np.argmax(dist):]=1.
+            # bl_stat = hp.beam2bl(dist * beam_stat,thetas, lmax = lmax)
+            # alm_s = hp.map2alm(product, lmax=lmax,iter=1, use_weights=True)
+            # alm_s = hp.almxfl(alm_s, bl_stat)
+            # smoothed = hp.alm2map(alm_s, self.needlet_nside[j], lmax=lmax)
+
+
             product = scale[i] * scale[k]
             if self.use_healpy:
+                product *= hp.ud_grade(self.mask, nside_out=self.needlet_nside[j], order_out="RING")
                 smoothed = hp.smoothing(product, np.radians(self.fwhm[j]))
             else:
                 nside = self.needlet_nside[j]
@@ -305,6 +382,8 @@ class NILC:
                 bl = hp.gauss_beam(np.radians(self.fwhm[j]), lmax=lmax)
                 product_alm = hp.almxfl(product_alm, bl)
                 smoothed = hp_loc.alm2map(product_alm, lmax, self.nthreads)
+            
+   
             return i, k, smoothed
 
         # Parallelize the computation of covariance elements
@@ -332,8 +411,9 @@ class NILC:
         inv_cov = np.linalg.inv(covariance)
 
         # Compute weights
-        weights = (inv_cov @ one_vec).T / (one_vec @ inv_cov @ one_vec + 1e-15)
-        return weights
+        weights = (inv_cov @ one_vec).T / (one_vec @ inv_cov @ one_vec )
+        
+        return weights * hp.ud_grade(self.mask, self.needlet_nside[j])
     
     
     def component_separation(self, maps: List[np.ndarray], field: int=0) -> Tuple[np.ndarray, List[np.ndarray]]:
