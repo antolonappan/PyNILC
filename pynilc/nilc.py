@@ -9,6 +9,7 @@ import os
 from concurrent.futures import ThreadPoolExecutor
 import tempfile
 
+
 class NILC:
     """
     NILC (Needlet Internal Linear Combination) class for component separation and residual calculation.
@@ -38,7 +39,8 @@ class NILC:
         nthreads: Union[str,int] = 'auto',
         parallel: int = 1,
         bias_method: str = 'nmodes',
-        mask = None
+        mask = None,
+        progress_bar: bool = True
     ):
         self.frequencies = frequencies
         self.input_fwhm = np.array(fwhm)
@@ -49,7 +51,7 @@ class NILC:
         self.nside = nside
         self.required_num_modes = required_num_modes
         mask = np.ones(hp.nside2npix(nside)) if mask is None else mask
-        self.mask = hp.ud_grade(mask, nside)
+        self.mask = hp.ud_grade(mask, nside, order_out="RING", power=-2)
         self.bias_method = bias_method
         assert bias_method in ['nmodes', 'tol'], "bias_method must be either 'nmodes' or 'tol'"
 
@@ -77,6 +79,7 @@ class NILC:
             raise ValueError("Invalid parallel processing level. Use 0, 1, or 2")
         self.common_fwhm = common_fwhm
         self.tmpdir = tempfile.mkdtemp()
+        self.progress_bar = progress_bar
 
     @property
     def lmax_per_needlet(self) -> np.ndarray:
@@ -138,9 +141,9 @@ class NILC:
         if self.parallel >= 1:
             with ThreadPoolExecutor(max_workers=len(maps)) as executor:
                 alms = list(tqdm(executor.map(process_map, range(len(maps))),
-                                 desc="Computing alms", total=len(maps)))
+                                 desc="Computing alms", total=len(maps), disable=not self.progress_bar))
         else:
-            alms = [process_map(i) for i in tqdm(range(len(maps)), desc="Computing alms")]
+            alms = [process_map(i) for i in tqdm(range(len(maps)), desc="Computing alms", disable=not self.progress_bar)]
         return np.array(alms)
     
     def _map_to_alm_polarization(self, maps: List[np.ndarray], field: int) -> np.ndarray:
@@ -176,9 +179,9 @@ class NILC:
         if self.parallel >= 1:
             with ThreadPoolExecutor(max_workers=len(maps)) as executor:
                 alms = list(tqdm(executor.map(process_map, range(len(maps))),
-                                 desc="Computing alms", total=len(maps)))
+                                 desc="Computing alms", total=len(maps), disable=not self.progress_bar))
         else:
-            alms = [process_map(i) for i in tqdm(range(len(maps)), desc="Computing alms")]
+            alms = [process_map(i) for i in tqdm(range(len(maps)), desc="Computing alms", disable=not self.progress_bar)]
         return np.array(alms)
 
     def map_to_alm(self, maps: List[np.ndarray], field: int) -> np.ndarray:
@@ -371,7 +374,7 @@ class NILC:
 
             product = scale[i] * scale[k]
             if self.use_healpy:
-                product *= hp.ud_grade(self.mask, nside_out=self.needlet_nside[j], order_out="RING")
+                product *= hp.ud_grade(self.mask, nside_out=self.needlet_nside[j], order_out="RING",power=-2)
                 smoothed = hp.smoothing(product, np.radians(self.fwhm[j]))
             else:
                 nside = self.needlet_nside[j]
@@ -412,8 +415,10 @@ class NILC:
 
         # Compute weights
         weights = (inv_cov @ one_vec).T / (one_vec @ inv_cov @ one_vec )
-        
-        return weights * hp.ud_grade(self.mask, self.needlet_nside[j])
+        local_mask = hp.ud_grade(self.mask, nside_out=self.needlet_nside[j], order_out="RING", power=-2)
+        weights[:,local_mask == 0] = 0.0  # Set weights to zero where mask is zero
+
+        return weights
     
     
     def component_separation(self, maps: List[np.ndarray], field: int=0) -> Tuple[np.ndarray, List[np.ndarray]]:
@@ -458,9 +463,9 @@ class NILC:
 
         if self.parallel >= 2:
             with ThreadPoolExecutor(max_workers=self.nthreads) as executor:
-                futures = list(tqdm(executor.map(process_needlet, range(self.num_needlets)), desc="Processing Needlet Scales", total=self.num_needlets))
+                futures = list(tqdm(executor.map(process_needlet, range(self.num_needlets)), desc="Processing Needlet Scales", total=self.num_needlets, disable=not self.progress_bar))
         else:
-            futures = [process_needlet(j) for j in tqdm(range(self.num_needlets), desc="Processing Needlet Scales")]
+            futures = [process_needlet(j) for j in tqdm(range(self.num_needlets), desc="Processing Needlet Scales", disable=not self.progress_bar)]
 
         for filtered_map, weights in futures:
             ilc_map += filtered_map
@@ -494,7 +499,7 @@ class NILC:
 
         residual_map = 0
 
-        for j in tqdm(range(self.num_needlets), desc="Calculating residuals"):
+        for j in tqdm(range(self.num_needlets), desc="Calculating residuals", disable=not self.progress_bar):
             scale = self.find_scale(j)
             weights = weight_list[j]
             residuals = np.sum(scale * weights, axis=0)
